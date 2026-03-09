@@ -8,6 +8,7 @@ using System.ServiceModel.Channels;
 using System.ServiceModel.Dispatcher;
 using OpenTelemetry.Context.Propagation;
 using OpenTelemetry.Internal;
+using OpenTelemetry.Trace;
 
 namespace OpenTelemetry.Instrumentation.Wcf.Implementation;
 
@@ -59,26 +60,24 @@ internal class TelemetryDispatchMessageInspector : IDispatchMessageInspector
             if (!string.IsNullOrEmpty(request.Headers.Action))
             {
                 action = request.Headers.Action;
-                activity.DisplayName = action;
             }
             else
             {
                 action = string.Empty;
             }
 
+            this.actionMappings.TryGetValue(action, out var actionMetadata);
+            var (rpcMethod, rpcMethodOriginal) = WcfInstrumentationConstants.ResolveRpcMethod(actionMetadata, action);
+            activity.DisplayName = WcfInstrumentationConstants.GetSpanName(rpcMethod);
+
             if (activity.IsAllDataRequested)
             {
-                activity.SetTag(WcfInstrumentationConstants.RpcSystemTag, WcfInstrumentationConstants.WcfSystemValue);
-
-                if (!this.actionMappings.TryGetValue(action, out var actionMetadata))
+                activity.SetTag(SemanticConventions.AttributeRpcSystemName, WcfInstrumentationConstants.WcfSystemValue);
+                activity.SetTag(SemanticConventions.AttributeRpcMethod, rpcMethod);
+                if (rpcMethodOriginal != null)
                 {
-                    actionMetadata = new ActionMetadata(
-                        contractName: null,
-                        operationName: action);
+                    activity.SetTag(SemanticConventions.AttributeRpcMethodOriginal, rpcMethodOriginal);
                 }
-
-                activity.SetTag(WcfInstrumentationConstants.RpcServiceTag, actionMetadata.ContractName);
-                activity.SetTag(WcfInstrumentationConstants.RpcMethodTag, actionMetadata.OperationName);
 
                 if (WcfInstrumentationActivitySource.Options.SetSoapMessageVersion)
                 {
@@ -88,8 +87,8 @@ internal class TelemetryDispatchMessageInspector : IDispatchMessageInspector
                 var localAddressUri = channel.LocalAddress?.Uri;
                 if (localAddressUri != null)
                 {
-                    activity.SetTag(WcfInstrumentationConstants.NetHostNameTag, localAddressUri.Host);
-                    activity.SetTag(WcfInstrumentationConstants.NetHostPortTag, localAddressUri.Port);
+                    activity.SetTag(SemanticConventions.AttributeServerAddress, localAddressUri.Host);
+                    activity.SetTag(SemanticConventions.AttributeServerPort, localAddressUri.Port);
                     activity.SetTag(WcfInstrumentationConstants.WcfChannelSchemeTag, localAddressUri.Scheme);
                     activity.SetTag(WcfInstrumentationConstants.WcfChannelPathTag, localAddressUri.LocalPath);
                 }

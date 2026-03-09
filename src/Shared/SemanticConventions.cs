@@ -151,5 +151,11 @@ internal static class SemanticConventions
     public const string AttributeDbQueryText = "db.query.text";
     public const string AttributeDbStoredProcedureName = "db.stored_procedure.name";
 
+    // v1.40.0 RPC conventions:
+    // https://github.com/open-telemetry/semantic-conventions/tree/v1.40.0/docs/rpc
+    public const string AttributeRpcSystemName = "rpc.system.name";
+    public const string AttributeRpcMethodOriginal = "rpc.method_original";
+    public const string AttributeRpcMethodOther = "_OTHER";
+
 #pragma warning restore CS1591 // Missing XML comment for publicly visible type or member
 }

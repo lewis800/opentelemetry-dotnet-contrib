@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+* **Breaking changes** Updated WCF telemetry to align with the latest RPC semantic
+  conventions: `rpc.system.name` replaces `rpc.system`, client `net.peer.*`
+  and server `net.host.*` tags are replaced by `server.address` and
+  `server.port`, `rpc.service` is no longer emitted, and `rpc.method` now uses
+  `{contract}/{operation}` with an operation-only fallback when contract
+  metadata is unavailable. Unmapped actions now emit `rpc.method = _OTHER`,
+  preserve the original action in `rpc.method_original`, and use semconv-
+  compliant span names.
+
+* Updated emitted telemetry schema URL to `1.40.0`.
+
 ## 1.15.0-beta.1
 
 Released 2026-Jan-21

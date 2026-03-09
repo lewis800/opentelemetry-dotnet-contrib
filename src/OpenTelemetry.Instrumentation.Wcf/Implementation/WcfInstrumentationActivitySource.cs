@@ -21,7 +21,13 @@ internal static class WcfInstrumentationActivitySource
     internal static readonly string OutgoingRequestActivityName = ActivitySourceName + ".OutgoingRequest";
     internal static readonly string UnassociatedExceptionActivityName = ActivitySourceName + ".Exception";
 
-    public static ActivitySource ActivitySource { get; } = new(ActivitySourceName, Assembly.GetPackageVersion());
+    private const string TelemetrySchemaUrl = "https://opentelemetry.io/schemas/1.40.0";
+
+    public static ActivitySource ActivitySource { get; } = new(new ActivitySourceOptions(ActivitySourceName)
+    {
+        Version = Assembly.GetPackageVersion(),
+        TelemetrySchemaUrl = TelemetrySchemaUrl,
+    });
 
     public static WcfInstrumentationOptions? Options { get; set; }
 

@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.ServiceModel.Channels;
 using OpenTelemetry.Context.Propagation;
 using OpenTelemetry.Internal;
+using OpenTelemetry.Trace;
 
 namespace OpenTelemetry.Instrumentation.Wcf.Implementation;
 
@@ -28,8 +29,11 @@ internal static class ClientChannelInstrumentation
             if (!string.IsNullOrEmpty(request.Headers.Action))
             {
                 action = request.Headers.Action;
-                activity.DisplayName = action;
             }
+
+            var actionMetadata = GetActionMetadata(request, action);
+            var (rpcMethod, rpcMethodOriginal) = WcfInstrumentationConstants.ResolveRpcMethod(actionMetadata, action);
+            activity.DisplayName = WcfInstrumentationConstants.GetSpanName(rpcMethod);
 
             Propagators.DefaultTextMapPropagator.Inject(
                 new PropagationContext(activity.Context, Baggage.Current),
@@ -38,11 +42,12 @@ internal static class ClientChannelInstrumentation
 
             if (activity.IsAllDataRequested)
             {
-                activity.SetTag(WcfInstrumentationConstants.RpcSystemTag, WcfInstrumentationConstants.WcfSystemValue);
-
-                var actionMetadata = GetActionMetadata(request, action);
-                activity.SetTag(WcfInstrumentationConstants.RpcServiceTag, actionMetadata.ContractName);
-                activity.SetTag(WcfInstrumentationConstants.RpcMethodTag, actionMetadata.OperationName);
+                activity.SetTag(SemanticConventions.AttributeRpcSystemName, WcfInstrumentationConstants.WcfSystemValue);
+                activity.SetTag(SemanticConventions.AttributeRpcMethod, rpcMethod);
+                if (rpcMethodOriginal != null)
+                {
+                    activity.SetTag(SemanticConventions.AttributeRpcMethodOriginal, rpcMethodOriginal);
+                }
 
                 if (WcfInstrumentationActivitySource.Options!.SetSoapMessageVersion)
                 {
@@ -52,8 +57,8 @@ internal static class ClientChannelInstrumentation
                 var remoteAddressUri = request.Headers.To ?? remoteChannelAddress;
                 if (remoteAddressUri != null)
                 {
-                    activity.SetTag(WcfInstrumentationConstants.NetPeerNameTag, remoteAddressUri.Host);
-                    activity.SetTag(WcfInstrumentationConstants.NetPeerPortTag, remoteAddressUri.Port);
+                    activity.SetTag(SemanticConventions.AttributeServerAddress, remoteAddressUri.Host);
+                    activity.SetTag(SemanticConventions.AttributeServerPort, remoteAddressUri.Port);
                     activity.SetTag(WcfInstrumentationConstants.WcfChannelSchemeTag, remoteAddressUri.Scheme);
                     activity.SetTag(WcfInstrumentationConstants.WcfChannelPathTag, remoteAddressUri.LocalPath);
                 }
@@ -124,21 +129,18 @@ internal static class ClientChannelInstrumentation
             : null;
     }
 
-    private static ActionMetadata GetActionMetadata(Message request, string action)
+    private static ActionMetadata? GetActionMetadata(Message request, string action)
     {
-        ActionMetadata? actionMetadata = null;
         if (request.Properties.TryGetValue(TelemetryContextMessageProperty.Name, out var telemetryContextProperty))
         {
             var actionMappings = (telemetryContextProperty as TelemetryContextMessageProperty)?.ActionMappings;
             if (actionMappings != null && actionMappings.TryGetValue(action, out var metadata))
             {
-                actionMetadata = metadata;
+                return metadata;
             }
         }
 
-        return actionMetadata ?? new ActionMetadata(
-            contractName: null,
-            operationName: action);
+        return null;
     }
 
     private static bool ShouldInstrumentRequest(Message request)

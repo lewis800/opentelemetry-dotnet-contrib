@@ -20,14 +20,13 @@ public class TelemetryBindingElementForHttpTests : IDisposable
 
     public TelemetryBindingElementForHttpTests()
     {
-        var random = new Random();
-        var retryCount = 5;
+        var retryCount = WcfTestHelpers.MaxRetries;
         HttpListener? createdListener = null;
         while (retryCount > 0)
         {
             try
             {
-                this.serviceBaseUri = new Uri($"http://localhost:{random.Next(2000, 5000)}/");
+                this.serviceBaseUri = WcfTestHelpers.GetRandomBaseUri(Uri.UriSchemeHttp);
 
                 createdListener = new HttpListener();
                 createdListener.Prefixes.Add(this.serviceBaseUri.OriginalString);
@@ -188,31 +187,20 @@ public class TelemetryBindingElementForHttpTests : IDisposable
         {
             client.Endpoint.EndpointBehaviors.Add(new DownstreamInstrumentationEndpointBehavior());
             client.Endpoint.EndpointBehaviors.Add(new TelemetryEndpointBehavior());
+            var req = new ServiceRequest(payload: "Hello Open Telemetry!");
 
             if (emptyOrNullAction)
             {
-                await client.ExecuteWithEmptyActionNameAsync(
-                    new ServiceRequest(
-                        payload: "Hello Open Telemetry!"));
+                await client.ExecuteWithEmptyActionNameAsync(req);
             }
             else
             {
-                await client.ExecuteAsync(
-                    new ServiceRequest(
-                        payload: "Hello Open Telemetry!"));
+                await client.ExecuteAsync(req);
             }
         }
         finally
         {
-            if (client.State == CommunicationState.Faulted)
-            {
-                client.Abort();
-            }
-            else
-            {
-                client.Close();
-            }
-
+            client.AbortOrClose();
             tracerProvider?.Shutdown();
             tracerProvider?.Dispose();
 
@@ -223,56 +211,24 @@ public class TelemetryBindingElementForHttpTests : IDisposable
         {
             if (!suppressDownstreamInstrumentation)
             {
-                Assert.NotEmpty(stoppedActivities);
-                if (filter)
-                {
-                    Assert.Single(stoppedActivities);
-                    Assert.Equal("DownstreamInstrumentation", stoppedActivities[0].OperationName);
-                }
-                else
-                {
-                    Assert.Equal(2, stoppedActivities.Count);
-                    Assert.NotNull(stoppedActivities.SingleOrDefault(activity => activity.OperationName == "DownstreamInstrumentation"));
-                    Assert.NotNull(stoppedActivities.SingleOrDefault(activity => activity.OperationName == WcfInstrumentationActivitySource.OutgoingRequestActivityName));
-                }
+                WcfTestHelpers.AssertDownstreamInstrumentationActivities(stoppedActivities, filter);
             }
             else
             {
                 if (!filter)
                 {
                     Assert.NotEmpty(stoppedActivities);
-                    Assert.Single(stoppedActivities);
+                    var activity = Assert.Single(stoppedActivities);
 
-                    var activity = stoppedActivities[0];
-
-                    if (emptyOrNullAction)
-                    {
-                        Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("ExecuteWithEmptyActionName"), activity.DisplayName);
-                        Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("ExecuteWithEmptyActionName"), activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethod).Value);
-                    }
-                    else
-                    {
-                        Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("Execute"), activity.DisplayName);
-                        Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("Execute"), activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethod).Value);
-                    }
-
-                    Assert.Equal(WcfInstrumentationActivitySource.OutgoingRequestActivityName, activity.OperationName);
-                    Assert.Equal(WcfInstrumentationConstants.WcfSystemValue, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeRpcSystemName));
-                    Assert.DoesNotContain(activity.TagObjects, t => t.Key == SemanticConventions.AttributeRpcService);
-                    Assert.Equal(this.serviceBaseUri.Host, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeServerAddress));
-                    Assert.Equal(this.serviceBaseUri.Port, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeServerPort));
-                    Assert.Equal("http", activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.WcfChannelSchemeTag).Value);
-                    Assert.Equal("/Service", activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.WcfChannelPathTag).Value);
-                    if (includeVersion)
-                    {
-                        Assert.Equal("Soap11 (http://schemas.xmlsoap.org/soap/envelope/) AddressingNone (http://schemas.microsoft.com/ws/2005/05/addressing/none)", activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.SoapMessageVersionTag).Value);
-                    }
-
-                    if (enrich && !enrichmentException)
-                    {
-                        Assert.Equal(WcfEnrichEventNames.BeforeSendRequest, activity.TagObjects.Single(t => t.Key == "client.beforesendrequest").Value);
-                        Assert.Equal(WcfEnrichEventNames.AfterReceiveReply, activity.TagObjects.Single(t => t.Key == "client.afterreceivereply").Value);
-                    }
+                    WcfTestHelpers.AssertOutgoingRequestActivity(
+                        activity,
+                        this.serviceBaseUri,
+                        emptyOrNullAction,
+                        includeVersion,
+                        "Soap11 (http://schemas.xmlsoap.org/soap/envelope/) AddressingNone (http://schemas.microsoft.com/ws/2005/05/addressing/none)",
+                        "http",
+                        enrich,
+                        enrichmentException);
                 }
                 else
                 {
@@ -291,7 +247,7 @@ public class TelemetryBindingElementForHttpTests : IDisposable
     {
         var testSource = new ActivitySource("TestSource");
 
-        var stoppedActivities = new List<Activity>();
+        List<Activity> stoppedActivities = [];
         var tracerProvider = Sdk.CreateTracerProviderBuilder()
             .AddSource("TestSource")
             .AddInMemoryExporter(stoppedActivities)
@@ -314,27 +270,14 @@ public class TelemetryBindingElementForHttpTests : IDisposable
         }
         finally
         {
-            if (client.State == CommunicationState.Faulted)
-            {
-                client.Abort();
-            }
-            else
-            {
-                client.Close();
-            }
-
+            client.AbortOrClose();
             tracerProvider?.Shutdown();
             tracerProvider?.Dispose();
             testSource.Dispose();
             WcfInstrumentationActivitySource.Options = null;
         }
 
-        Assert.Equal(5, stoppedActivities.Count);
-        Assert.All(stoppedActivities, activity => Assert.Equal(stoppedActivities[0].TraceId, activity.TraceId));
-        var parent = stoppedActivities.Single(activity => activity.Parent == null);
-        Assert.All(
-            stoppedActivities.Where(activity => activity != parent),
-            activity => Assert.Equal(parent.SpanId, activity.ParentSpanId));
+        WcfTestHelpers.AssertActivitiesHaveCorrectParentage(stoppedActivities);
     }
 
     [Fact]
@@ -342,7 +285,7 @@ public class TelemetryBindingElementForHttpTests : IDisposable
     {
         var testSource = new ActivitySource("TestSource");
 
-        var stoppedActivities = new List<Activity>();
+        List<Activity> stoppedActivities = [];
         var tracerProvider = Sdk.CreateTracerProviderBuilder()
             .AddSource("TestSource")
             .AddInMemoryExporter(stoppedActivities)
@@ -368,24 +311,8 @@ public class TelemetryBindingElementForHttpTests : IDisposable
         }
         finally
         {
-            if (client.State == CommunicationState.Faulted)
-            {
-                client.Abort();
-            }
-            else
-            {
-                client.Close();
-            }
-
-            if (clientBadUrl.State == CommunicationState.Faulted)
-            {
-                clientBadUrl.Abort();
-            }
-            else
-            {
-                clientBadUrl.Close();
-            }
-
+            client.AbortOrClose();
+            clientBadUrl.AbortOrClose();
             tracerProvider?.Shutdown();
             tracerProvider?.Dispose();
             testSource.Dispose();
@@ -393,10 +320,7 @@ public class TelemetryBindingElementForHttpTests : IDisposable
         }
 
         Assert.Equal(5, stoppedActivities.Count);
-        Assert.All(stoppedActivities, activity => Assert.Equal(stoppedActivities[0].TraceId, activity.TraceId));
-        var parent = stoppedActivities.Single(activity => activity.Parent == null);
-        var children = stoppedActivities.Where(activity => activity != parent);
-        Assert.All(children, activity => Assert.Equal(parent.SpanId, activity.ParentSpanId));
+        WcfTestHelpers.AssertActivitiesHaveCorrectParentage(stoppedActivities);
     }
 
     [Fact]

@@ -86,7 +86,7 @@ public class TelemetryDispatchMessageInspectorForOneWayOperationsTests : IDispos
 
         using var activityListener = new ActivityListener
         {
-            ShouldListenTo = activitySource => true,
+            ShouldListenTo = _ => true,
             ActivityStopped = stoppedActivities.Add,
         };
 
@@ -106,15 +106,7 @@ public class TelemetryDispatchMessageInspectorForOneWayOperationsTests : IDispos
         }
         finally
         {
-            if (client.State == CommunicationState.Faulted)
-            {
-                client.Abort();
-            }
-            else
-            {
-                client.Close();
-            }
-
+            client.AbortOrClose();
             tracerProvider?.Shutdown();
             tracerProvider?.Dispose();
 
@@ -125,20 +117,12 @@ public class TelemetryDispatchMessageInspectorForOneWayOperationsTests : IDispos
         Assert.Empty(this.thrownExceptions);
 
         Assert.NotEmpty(stoppedActivities);
-        Assert.Single(stoppedActivities);
+        var activity = Assert.Single(stoppedActivities);
 
-        var activity = stoppedActivities[0];
         Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("ExecuteWithOneWay"), activity.DisplayName);
         Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("ExecuteWithOneWay"), activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethod).Value);
-        Assert.DoesNotContain(activity.TagObjects, t => t.Key == WcfInstrumentationConstants.SoapReplyActionTag);
-
-        Assert.Equal(WcfInstrumentationActivitySource.IncomingRequestActivityName, activity.OperationName);
-        Assert.Equal(WcfInstrumentationConstants.WcfSystemValue, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeRpcSystemName));
-        Assert.DoesNotContain(activity.TagObjects, t => t.Key == SemanticConventions.AttributeRpcService);
-        Assert.Equal(this.serviceBaseUri.Host, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeServerAddress));
-        Assert.Equal(this.serviceBaseUri.Port, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeServerPort));
-        Assert.Equal("net.tcp", activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.WcfChannelSchemeTag).Value);
-        Assert.Equal("/Service", activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.WcfChannelPathTag).Value);
+        Assert.DoesNotContain(activity.TagObjects, t => t.Key == WcfInstrumentationConstants.AttributeSoapReplyAction);
+        WcfTestHelpers.AssertIncomingRequestActivityCommon(activity, this.serviceBaseUri);
     }
 }
 

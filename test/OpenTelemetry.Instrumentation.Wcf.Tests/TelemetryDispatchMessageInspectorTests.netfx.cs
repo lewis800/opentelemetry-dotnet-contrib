@@ -65,10 +65,7 @@ public class TelemetryDispatchMessageInspectorTests : IDisposable
         this.serviceHost = createdHost;
     }
 
-    public void Dispose()
-    {
-        this.serviceHost?.Close();
-    }
+    public void Dispose() => this.serviceHost?.Close();
 
     [Theory]
     [InlineData(true, false)]
@@ -90,7 +87,7 @@ public class TelemetryDispatchMessageInspectorTests : IDisposable
 
         using var activityListener = new ActivityListener
         {
-            ShouldListenTo = activitySource => true,
+            ShouldListenTo = _ => true,
             ActivityStopped = stoppedActivities.Add,
         };
 
@@ -148,15 +145,7 @@ public class TelemetryDispatchMessageInspectorTests : IDisposable
         }
         finally
         {
-            if (client.State == CommunicationState.Faulted)
-            {
-                client.Abort();
-            }
-            else
-            {
-                client.Close();
-            }
-
+            client.AbortOrClose();
             tracerProvider?.Shutdown();
             tracerProvider?.Dispose();
 
@@ -166,34 +155,24 @@ public class TelemetryDispatchMessageInspectorTests : IDisposable
         if (instrument && !filter)
         {
             Assert.NotEmpty(stoppedActivities);
-            Assert.Single(stoppedActivities);
-
-            var activity = stoppedActivities[0];
+            var activity = Assert.Single(stoppedActivities);
 
             if (emptyOrNullAction)
             {
                 Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("ExecuteWithEmptyActionName"), activity.DisplayName);
                 Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("ExecuteWithEmptyActionName"), activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethod).Value);
-                Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("ExecuteWithEmptyActionNameResponse"), activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.SoapReplyActionTag).Value);
+                Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("ExecuteWithEmptyActionNameResponse"), activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.AttributeSoapReplyAction).Value);
             }
             else
             {
                 Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("Execute"), activity.DisplayName);
                 Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("Execute"), activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethod).Value);
-                Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("ExecuteResponse"), activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.SoapReplyActionTag).Value);
+                Assert.Equal(WcfTestHelpers.GetContractQualifiedMethod("ExecuteResponse"), activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.AttributeSoapReplyAction).Value);
             }
-
-            Assert.Equal(WcfInstrumentationActivitySource.IncomingRequestActivityName, activity.OperationName);
-            Assert.Equal(WcfInstrumentationConstants.WcfSystemValue, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeRpcSystemName));
-            Assert.DoesNotContain(activity.TagObjects, t => t.Key == SemanticConventions.AttributeRpcService);
-            Assert.Equal(this.serviceBaseUri.Host, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeServerAddress));
-            Assert.Equal(this.serviceBaseUri.Port, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeServerPort));
-            Assert.Equal("net.tcp", activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.WcfChannelSchemeTag).Value);
-            Assert.Equal("/Service", activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.WcfChannelPathTag).Value);
 
             if (includeVersion)
             {
-                Assert.Equal("Soap12 (http://www.w3.org/2003/05/soap-envelope) Addressing10 (http://www.w3.org/2005/08/addressing)", activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.SoapMessageVersionTag).Value);
+                Assert.Equal("Soap12 (http://www.w3.org/2003/05/soap-envelope) Addressing10 (http://www.w3.org/2005/08/addressing)", activity.TagObjects.FirstOrDefault(t => t.Key == WcfInstrumentationConstants.AttributeSoapMessageVersion).Value);
             }
 
             if (enrich && !enrichmentException)
@@ -201,6 +180,8 @@ public class TelemetryDispatchMessageInspectorTests : IDisposable
                 Assert.Equal(WcfEnrichEventNames.AfterReceiveRequest, activity.TagObjects.Single(t => t.Key == "server.afterreceiverequest").Value);
                 Assert.Equal(WcfEnrichEventNames.BeforeSendReply, activity.TagObjects.Single(t => t.Key == "server.beforesendreply").Value);
             }
+
+            WcfTestHelpers.AssertIncomingRequestActivityCommon(activity, this.serviceBaseUri);
         }
         else
         {
@@ -228,12 +209,12 @@ public class TelemetryDispatchMessageInspectorTests : IDisposable
         List<Exception> recordedExceptions = [];
         using var activityListener = new ActivityListener
         {
-            ShouldListenTo = activitySource => true,
+            ShouldListenTo = _ => true,
             ActivityStarted = startedActivities.Add,
             ActivityStopped = stoppedActivities.Add,
         };
 
-        activityListener.ExceptionRecorder += (Activity activity, Exception ex, ref TagList tags) =>
+        activityListener.ExceptionRecorder += (activity, ex, ref tags) =>
         {
             recordedExceptions.Add(ex);
         };
@@ -288,15 +269,7 @@ public class TelemetryDispatchMessageInspectorTests : IDisposable
             startedActivities[0].AddTag(nameof(triggerException), triggerException);
             startedActivities[0].AddTag(nameof(runAsync), runAsync);
 
-            if (client.State == CommunicationState.Faulted)
-            {
-                client.Abort();
-            }
-            else
-            {
-                client.Close();
-            }
-
+            client.AbortOrClose();
             tracerProvider?.Shutdown();
             tracerProvider?.Dispose();
 
@@ -308,7 +281,7 @@ public class TelemetryDispatchMessageInspectorTests : IDisposable
 
         if (recordException && triggerException)
         {
-            Assert.Collection(recordedExceptions, e => Assert.IsType<Exception>(e));
+            Assert.All(recordedExceptions, e => Assert.IsType<Exception>(e));
         }
         else
         {

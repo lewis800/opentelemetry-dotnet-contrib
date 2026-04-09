@@ -13,6 +13,10 @@
     <AssemblyIsCLSCompliant>false</AssemblyIsCLSCompliant>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$([MSBuild]::GetTargetFrameworkIdentifier(`$(TargetFramework)`))' == '.NETCoreApp'">
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="OpenTelemetry" />
     <PackageReference Include="System.Runtime.InteropServices.RuntimeInformation" Condition="'$([MSBuild]::GetTargetFrameworkIdentifier(`$(TargetFramework)`))' == '.NETFramework'" />
@@ -34,6 +38,7 @@
     <InternalsVisibleTo Include="OpenTelemetry.Exporter.Geneva.Benchmarks" PublicKey="$(StrongNamePublicKey)" />
     <InternalsVisibleTo Include="OpenTelemetry.Exporter.Geneva.FuzzTests" PublicKey="$(StrongNamePublicKey)" />
     <InternalsVisibleTo Include="OpenTelemetry.Exporter.Geneva.Stress" PublicKey="$(StrongNamePublicKey)" />
+    <InternalsVisibleTo Include="OpenTelemetry.Exporter.Geneva.Tests" PublicKey="$(StrongNamePublicKey)" />
   </ItemGroup>
 
 </Project>

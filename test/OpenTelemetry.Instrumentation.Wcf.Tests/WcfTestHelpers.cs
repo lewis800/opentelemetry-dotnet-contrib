@@ -7,6 +7,13 @@ using Xunit;
 
 namespace OpenTelemetry.Instrumentation.Wcf.Tests;
 
+internal enum RpcSemanticConventionMode
+{
+    Old,
+    Stable,
+    Duplicate,
+}
+
 /// <summary>
 /// Helper class with static methods for common WCF instrumentation test assertions.
 /// </summary>
@@ -68,18 +75,22 @@ internal static class WcfTestHelpers
     {
         Assert.NotNull(activity);
 
-        var expectedMethod = emptyOrNullAction
-            ? GetContractQualifiedMethod("ExecuteWithEmptyActionName")
-            : GetContractQualifiedMethod("Execute");
-
-        Assert.Equal(expectedMethod, activity.DisplayName);
-        Assert.Equal(expectedMethod, GetTagValue(activity, SemanticConventions.AttributeRpcMethod));
+        if (emptyOrNullAction)
+        {
+            Assert.Equal(WcfInstrumentationActivitySource.OutgoingRequestActivityName, activity.DisplayName);
+            Assert.Equal("ExecuteWithEmptyActionName", GetTagValue(activity, SemanticConventions.AttributeRpcMethod));
+        }
+        else
+        {
+            Assert.Equal(GetContractQualifiedMethod("Execute"), activity.DisplayName);
+            Assert.Equal("Execute", GetTagValue(activity, SemanticConventions.AttributeRpcMethod));
+        }
 
         Assert.Equal(WcfInstrumentationActivitySource.OutgoingRequestActivityName, activity.OperationName);
-        Assert.Equal(WcfInstrumentationConstants.WcfSystemValue, GetTagValue(activity, SemanticConventions.AttributeRpcSystemName));
-        Assert.DoesNotContain(activity.TagObjects, t => t.Key == SemanticConventions.AttributeRpcService);
-        Assert.Equal(serviceBaseUri.Host, GetTagValue(activity, SemanticConventions.AttributeServerAddress));
-        Assert.Equal(serviceBaseUri.Port, GetTagValue(activity, SemanticConventions.AttributeServerPort));
+        Assert.Equal(WcfInstrumentationConstants.WcfSystemValue, GetTagValue(activity, SemanticConventions.AttributeRpcSystem));
+        Assert.Equal(ServiceContractName, GetTagValue(activity, SemanticConventions.AttributeRpcService));
+        Assert.Equal(serviceBaseUri.Host, GetTagValue(activity, SemanticConventions.AttributeNetPeerName));
+        Assert.Equal(serviceBaseUri.Port, GetTagValue(activity, SemanticConventions.AttributeNetPeerPort));
         Assert.Equal(schemeTag, GetTagValue(activity, WcfInstrumentationConstants.AttributeWcfChannelScheme));
         Assert.Equal("/Service", GetTagValue(activity, WcfInstrumentationConstants.AttributeWcfChannelPath));
 
@@ -111,10 +122,10 @@ internal static class WcfTestHelpers
         Assert.NotNull(activity);
 
         Assert.Equal(WcfInstrumentationActivitySource.IncomingRequestActivityName, activity.OperationName);
-        Assert.Equal(WcfInstrumentationConstants.WcfSystemValue, GetTagValue(activity, SemanticConventions.AttributeRpcSystemName));
-        Assert.DoesNotContain(activity.TagObjects, t => t.Key == SemanticConventions.AttributeRpcService);
-        Assert.Equal(serviceBaseUri.Host, GetTagValue(activity, SemanticConventions.AttributeServerAddress));
-        Assert.Equal(serviceBaseUri.Port, GetTagValue(activity, SemanticConventions.AttributeServerPort));
+        Assert.Equal(WcfInstrumentationConstants.WcfSystemValue, GetTagValue(activity, SemanticConventions.AttributeRpcSystem));
+        Assert.Equal(ServiceContractName, GetTagValue(activity, SemanticConventions.AttributeRpcService));
+        Assert.Equal(serviceBaseUri.Host, GetTagValue(activity, SemanticConventions.AttributeNetHostName));
+        Assert.Equal(serviceBaseUri.Port, GetTagValue(activity, SemanticConventions.AttributeNetHostPort));
         Assert.Equal("net.tcp", GetTagValue(activity, WcfInstrumentationConstants.AttributeWcfChannelScheme));
         Assert.Equal("/Service", GetTagValue(activity, WcfInstrumentationConstants.AttributeWcfChannelPath));
     }
@@ -148,5 +159,17 @@ internal static class WcfTestHelpers
         Assert.All(
             activities.Where(activity => activity != parent),
             activity => Assert.Equal(parent.SpanId, activity.ParentSpanId));
+    }
+
+    public static IDisposable UseRpcSemanticConvention(RpcSemanticConventionMode mode)
+    {
+        var value = mode switch
+        {
+            RpcSemanticConventionMode.Stable => "rpc",
+            RpcSemanticConventionMode.Duplicate => "rpc/dup",
+            _ => string.Empty,
+        };
+
+        return EnvironmentVariableScope.Create("OTEL_SEMCONV_STABILITY_OPT_IN", value);
     }
 }

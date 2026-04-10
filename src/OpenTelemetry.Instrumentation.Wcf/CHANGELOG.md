@@ -2,16 +2,15 @@
 
 ## Unreleased
 
-* **Breaking changes** Updated WCF telemetry to align with the latest RPC semantic
-  conventions: `rpc.system.name` replaces `rpc.system`, client `net.peer.*`
-  and server `net.host.*` tags are replaced by `server.address` and
-  `server.port`, `rpc.service` is no longer emitted, and `rpc.method` now uses
-  `{contract}/{operation}` with an operation-only fallback when contract
-  metadata is unavailable. Unmapped actions now emit `rpc.method = _OTHER`,
-  preserve the original action in `rpc.method_original`, and use semconv-
-  compliant span names.
+* Added support for `OTEL_SEMCONV_STABILITY_OPT_IN` RPC semantic convention
+  migration. WCF continues to emit its existing RPC conventions by default in
+  this major version. Set `OTEL_SEMCONV_STABILITY_OPT_IN=rpc` to emit only the
+  newer RPC conventions, or `OTEL_SEMCONV_STABILITY_OPT_IN=rpc/dup` to emit
+  stable conventions alongside the legacy-compatible tags that can be emitted on
+  the same span.
 
-* Updated emitted telemetry schema URL to `1.40.0`.
+* Updated the emitted telemetry schema URL to `1.40.0` when stable RPC
+  conventions are opted in.
 
 * Updated OpenTelemetry core component version(s) to `1.15.2`.
   ([#4080](https://github.com/open-telemetry/opentelemetry-dotnet-contrib/pull/4080))

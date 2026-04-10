@@ -37,7 +37,7 @@ public static class TracerProviderBuilderExtensions
         var options = new WcfInstrumentationOptions();
         configure?.Invoke(options);
 
-        WcfInstrumentationActivitySource.Options = options;
+        WcfInstrumentationActivitySource.Initialize(options);
 
 #if NETFRAMEWORK
         Instrumentation.Wcf.Implementation.AspNetParentSpanCorrector.Register();

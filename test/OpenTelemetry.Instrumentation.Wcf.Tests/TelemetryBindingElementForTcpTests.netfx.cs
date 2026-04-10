@@ -367,7 +367,7 @@ public class TelemetryBindingElementForTcpTests : IDisposable
         WcfInstrumentationActivitySource.Options = null;
 
         var activity = Assert.Single(stoppedActivities);
-        Assert.Equal("ExecuteWithEmptyActionName", activity.DisplayName);
+        Assert.Equal(WcfInstrumentationActivitySource.OutgoingRequestActivityName, activity.DisplayName);
         Assert.Equal("ExecuteWithEmptyActionName", activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethod).Value);
     }
 
@@ -404,9 +404,9 @@ public class TelemetryBindingElementForTcpTests : IDisposable
         WcfInstrumentationActivitySource.Options = null;
 
         var activity = Assert.Single(stoppedActivities);
-        Assert.Equal(WcfInstrumentationConstants.WcfSystemValue, activity.DisplayName);
-        Assert.Equal(SemanticConventions.AttributeRpcMethodOther, activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethod).Value);
-        Assert.Equal(action, activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethodOriginal).Value);
+        Assert.Equal(action, activity.DisplayName);
+        Assert.Equal(action, activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethod).Value);
+        Assert.DoesNotContain(activity.TagObjects, t => t.Key == SemanticConventions.AttributeRpcMethodOriginal);
     }
 
     [Fact]

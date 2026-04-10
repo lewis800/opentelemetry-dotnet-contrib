@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.ServiceModel;
 using System.ServiceModel.Channels;
 using System.ServiceModel.Dispatcher;
+using OpenTelemetry.Trace;
 
 namespace OpenTelemetry.Instrumentation.Wcf.Implementation;
 
@@ -27,7 +28,8 @@ internal class TracingErrorHandler : IErrorHandler
         // Also it becomes very difficult to unit-test, because there is no easy `ErrorsHandled`
         // event to listen for before checking to see whether the error was logged.
 
-        if (!WcfInstrumentationActivitySource.Options?.RecordException ?? false)
+        var options = WcfInstrumentationActivitySource.Options;
+        if (options == null)
         {
             return;
         }
@@ -35,13 +37,31 @@ internal class TracingErrorHandler : IErrorHandler
         // OperationContext.Current *should* be reliable even in async calls at .NET 4.6.2+.
         // In older versions it may not be.
         var context = OperationContext.Current?.Extensions.Find<WcfOperationContext>();
-        var activity = context?.Activity ?? WcfInstrumentationActivitySource.ActivitySource.StartActivity(WcfInstrumentationActivitySource.UnassociatedExceptionActivityName, ActivityKind.Internal);
+        var activity = context?.Activity;
 
-        activity?.AddException(error);
+        if (activity == null && options.RecordException)
+        {
+            activity = WcfInstrumentationActivitySource.ActivitySource.StartActivity(WcfInstrumentationActivitySource.UnassociatedExceptionActivityName, ActivityKind.Internal);
+        }
+
+        if (activity == null)
+        {
+            return;
+        }
+
+        if (options.EmitNewAttributes)
+        {
+            activity.SetTag(SemanticConventions.AttributeErrorType, WcfInstrumentationConstants.GetErrorType(error));
+        }
+
+        if (options.RecordException)
+        {
+            activity.AddException(error);
+        }
 
         if (activity != context?.Activity)
         {
-            activity?.Stop();
+            activity.Stop();
         }
     }
 }

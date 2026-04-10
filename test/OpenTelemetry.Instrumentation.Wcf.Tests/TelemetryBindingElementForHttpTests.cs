@@ -324,6 +324,156 @@ public class TelemetryBindingElementForHttpTests : IDisposable
     }
 
     [Fact]
+    public void OutgoingRequestProvidesStableSamplingAttributesAtActivityCreation()
+    {
+        using var scope = WcfTestHelpers.UseRpcSemanticConvention(RpcSemanticConventionMode.Stable);
+
+        Dictionary<string, object?>? creationTags = null;
+
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = activitySource => activitySource.Name == WcfInstrumentationActivitySource.ActivitySourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+            {
+                creationTags = options.Tags?.ToDictionary(tag => tag.Key, tag => tag.Value);
+                return ActivitySamplingResult.AllDataAndRecorded;
+            },
+        };
+
+        ActivitySource.AddActivityListener(activityListener);
+
+        var tracerProvider = Sdk.CreateTracerProviderBuilder()
+            .AddWcfInstrumentation()
+            .Build();
+
+        var action = WcfTestHelpers.GetContractQualifiedMethod("Execute");
+
+        using var request = Message.CreateMessage(MessageVersion.Soap11, action);
+        request.Properties[TelemetryContextMessageProperty.Name] = new TelemetryContextMessageProperty(
+            new Dictionary<string, ActionMetadata>(StringComparer.OrdinalIgnoreCase)
+            {
+                [action] = new ActionMetadata(contractName: WcfTestHelpers.ServiceContractName, operationName: "Execute"),
+            });
+
+        var state = ClientChannelInstrumentation.BeforeSendRequest(
+            request,
+            new Uri(this.serviceBaseUri, "/Service"));
+
+        using var reply = Message.CreateMessage(MessageVersion.Soap11, action: WcfTestHelpers.GetContractQualifiedMethod("ExecuteResponse"));
+        ClientChannelInstrumentation.AfterRequestCompleted(reply, state);
+
+        tracerProvider.Shutdown();
+        tracerProvider.Dispose();
+        WcfInstrumentationActivitySource.Options = null;
+
+        Assert.NotNull(creationTags);
+        Assert.Equal(WcfInstrumentationConstants.WcfSystemValue, creationTags![SemanticConventions.AttributeRpcSystemName]);
+        Assert.Equal(action, creationTags[SemanticConventions.AttributeRpcMethod]);
+        Assert.Equal(this.serviceBaseUri.Host, creationTags[SemanticConventions.AttributeServerAddress]);
+        Assert.Equal(this.serviceBaseUri.Port, creationTags[SemanticConventions.AttributeServerPort]);
+    }
+
+    [Fact]
+    public void OutgoingRequestProvidesLegacyAndStableSamplingAttributesAtActivityCreationWhenDupIsOptedIn()
+    {
+        using var scope = WcfTestHelpers.UseRpcSemanticConvention(RpcSemanticConventionMode.Duplicate);
+
+        List<KeyValuePair<string, object?>>? creationTags = null;
+
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = activitySource => activitySource.Name == WcfInstrumentationActivitySource.ActivitySourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+            {
+                creationTags = options.Tags?.ToList();
+                return ActivitySamplingResult.AllDataAndRecorded;
+            },
+        };
+
+        ActivitySource.AddActivityListener(activityListener);
+
+        var tracerProvider = Sdk.CreateTracerProviderBuilder()
+            .AddWcfInstrumentation()
+            .Build();
+
+        var action = WcfTestHelpers.GetContractQualifiedMethod("Execute");
+
+        using var request = Message.CreateMessage(MessageVersion.Soap11, action);
+        request.Properties[TelemetryContextMessageProperty.Name] = new TelemetryContextMessageProperty(
+            new Dictionary<string, ActionMetadata>(StringComparer.OrdinalIgnoreCase)
+            {
+                [action] = new ActionMetadata(contractName: WcfTestHelpers.ServiceContractName, operationName: "Execute"),
+            });
+
+        var state = ClientChannelInstrumentation.BeforeSendRequest(
+            request,
+            new Uri(this.serviceBaseUri, "/Service"));
+
+        using var reply = Message.CreateMessage(MessageVersion.Soap11, action: WcfTestHelpers.GetContractQualifiedMethod("ExecuteResponse"));
+        ClientChannelInstrumentation.AfterRequestCompleted(reply, state);
+
+        tracerProvider.Shutdown();
+        tracerProvider.Dispose();
+        WcfInstrumentationActivitySource.Options = null;
+
+        Assert.NotNull(creationTags);
+        Assert.Contains(creationTags!, tag => tag.Key == SemanticConventions.AttributeRpcSystem && Equals(tag.Value, WcfInstrumentationConstants.WcfSystemValue));
+        Assert.Contains(creationTags!, tag => tag.Key == SemanticConventions.AttributeRpcService && Equals(tag.Value, WcfTestHelpers.ServiceContractName));
+        Assert.Contains(creationTags!, tag => tag.Key == SemanticConventions.AttributeRpcMethod && Equals(tag.Value, "Execute"));
+        Assert.Contains(creationTags!, tag => tag.Key == SemanticConventions.AttributeNetPeerName && Equals(tag.Value, this.serviceBaseUri.Host));
+        Assert.Contains(creationTags!, tag => tag.Key == SemanticConventions.AttributeNetPeerPort && Equals(tag.Value, this.serviceBaseUri.Port));
+        Assert.Contains(creationTags!, tag => tag.Key == SemanticConventions.AttributeRpcSystemName && Equals(tag.Value, WcfInstrumentationConstants.WcfSystemValue));
+        Assert.Contains(creationTags!, tag => tag.Key == SemanticConventions.AttributeRpcMethod && Equals(tag.Value, action));
+        Assert.Contains(creationTags!, tag => tag.Key == SemanticConventions.AttributeServerAddress && Equals(tag.Value, this.serviceBaseUri.Host));
+        Assert.Contains(creationTags!, tag => tag.Key == SemanticConventions.AttributeServerPort && Equals(tag.Value, this.serviceBaseUri.Port));
+    }
+
+    [Fact]
+    public void OutgoingRequestSetsStableErrorTypeForTransportExceptions()
+    {
+        using var scope = WcfTestHelpers.UseRpcSemanticConvention(RpcSemanticConventionMode.Stable);
+
+        List<Activity> stoppedActivities = [];
+
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = activitySource => activitySource.Name == WcfInstrumentationActivitySource.ActivitySourceName,
+            ActivityStopped = stoppedActivities.Add,
+        };
+
+        ActivitySource.AddActivityListener(activityListener);
+
+        var tracerProvider = Sdk.CreateTracerProviderBuilder()
+            .AddWcfInstrumentation()
+            .Build();
+
+        var client = new ServiceClient(
+            new BasicHttpBinding(BasicHttpSecurityMode.None),
+            new EndpointAddress(new Uri("http://localhost:1/Service")));
+
+        string? expectedErrorType = null;
+
+        try
+        {
+            client.Endpoint.EndpointBehaviors.Add(new TelemetryEndpointBehavior());
+
+            var exception = Assert.ThrowsAny<Exception>(() => client.ExecuteSynchronous(new ServiceRequest(payload: "Hello Open Telemetry!")));
+            expectedErrorType = exception.GetType().FullName ?? exception.GetType().Name;
+        }
+        finally
+        {
+            client.AbortOrClose();
+            tracerProvider.Shutdown();
+            tracerProvider.Dispose();
+            WcfInstrumentationActivitySource.Options = null;
+        }
+
+        var activity = Assert.Single(stoppedActivities);
+        Assert.Equal(ActivityStatusCode.Error, activity.Status);
+        Assert.Equal(expectedErrorType, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeErrorType));
+    }
+
+    [Fact]
     public void OutgoingRequestUsesOperationOnlyRpcMethodWhenActionMetadataContractIsUnavailable()
     {
         List<Activity> stoppedActivities = [];
@@ -359,7 +509,7 @@ public class TelemetryBindingElementForHttpTests : IDisposable
         WcfInstrumentationActivitySource.Options = null;
 
         var activity = Assert.Single(stoppedActivities);
-        Assert.Equal("ExecuteWithEmptyActionName", activity.DisplayName);
+        Assert.Equal(WcfInstrumentationActivitySource.OutgoingRequestActivityName, activity.DisplayName);
         Assert.Equal("ExecuteWithEmptyActionName", activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethod).Value);
     }
 
@@ -396,8 +546,142 @@ public class TelemetryBindingElementForHttpTests : IDisposable
         WcfInstrumentationActivitySource.Options = null;
 
         var activity = Assert.Single(stoppedActivities);
+        Assert.Equal(action, activity.DisplayName);
+        Assert.Equal(action, activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethod).Value);
+        Assert.DoesNotContain(activity.TagObjects, t => t.Key == SemanticConventions.AttributeRpcMethodOriginal);
+    }
+
+    [Fact]
+    public void OutgoingRequestUsesStableRpcMethodWhenStableRpcConventionsAreOptedIn()
+    {
+        using var scope = WcfTestHelpers.UseRpcSemanticConvention(RpcSemanticConventionMode.Stable);
+
+        List<Activity> stoppedActivities = [];
+
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = _ => true,
+            ActivityStopped = stoppedActivities.Add,
+        };
+
+        ActivitySource.AddActivityListener(activityListener);
+
+        var tracerProvider = Sdk.CreateTracerProviderBuilder()
+            .AddWcfInstrumentation()
+            .Build();
+
+        using var request = Message.CreateMessage(MessageVersion.Soap11, action: string.Empty);
+        request.Properties[TelemetryContextMessageProperty.Name] = new TelemetryContextMessageProperty(
+            new Dictionary<string, ActionMetadata>(StringComparer.OrdinalIgnoreCase)
+            {
+                [string.Empty] = new ActionMetadata(contractName: null, operationName: "ExecuteWithEmptyActionName"),
+            });
+
+        var state = ClientChannelInstrumentation.BeforeSendRequest(
+            request,
+            new Uri(this.serviceBaseUri, "/Service"));
+
+        using var reply = Message.CreateMessage(MessageVersion.Soap11, action: WcfTestHelpers.GetContractQualifiedMethod("ExecuteWithEmptyActionNameResponse"));
+        ClientChannelInstrumentation.AfterRequestCompleted(reply, state);
+
+        tracerProvider.Shutdown();
+        tracerProvider.Dispose();
+        WcfInstrumentationActivitySource.Options = null;
+
+        var activity = Assert.Single(stoppedActivities);
+        Assert.Equal("ExecuteWithEmptyActionName", activity.DisplayName);
+        Assert.Equal("ExecuteWithEmptyActionName", activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethod).Value);
+        Assert.DoesNotContain(activity.TagObjects, t => t.Key == SemanticConventions.AttributeRpcService);
+    }
+
+    [Theory]
+    [InlineData("https://example.com/OrderService/SubmitOrder")]
+    [InlineData("urn:example:orders#SubmitOrder")]
+    public void OutgoingRequestUsesOtherRpcMethodAndOriginalMethodWhenStableRpcConventionsAreOptedIn(string action)
+    {
+        using var scope = WcfTestHelpers.UseRpcSemanticConvention(RpcSemanticConventionMode.Stable);
+
+        List<Activity> stoppedActivities = [];
+
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = _ => true,
+            ActivityStopped = stoppedActivities.Add,
+        };
+
+        ActivitySource.AddActivityListener(activityListener);
+
+        var tracerProvider = Sdk.CreateTracerProviderBuilder()
+            .AddWcfInstrumentation()
+            .Build();
+
+        using var request = Message.CreateMessage(MessageVersion.Soap11, action);
+
+        var state = ClientChannelInstrumentation.BeforeSendRequest(
+            request,
+            new Uri(this.serviceBaseUri, "/Service"));
+
+        using var reply = Message.CreateMessage(MessageVersion.Soap11, action: $"{action}Response");
+        ClientChannelInstrumentation.AfterRequestCompleted(reply, state);
+
+        tracerProvider.Shutdown();
+        tracerProvider.Dispose();
+        WcfInstrumentationActivitySource.Options = null;
+
+        var activity = Assert.Single(stoppedActivities);
         Assert.Equal(WcfInstrumentationConstants.WcfSystemValue, activity.DisplayName);
         Assert.Equal(SemanticConventions.AttributeRpcMethodOther, activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethod).Value);
         Assert.Equal(action, activity.TagObjects.FirstOrDefault(t => t.Key == SemanticConventions.AttributeRpcMethodOriginal).Value);
+    }
+
+    [Fact]
+    public void OutgoingRequestEmitsLegacyAndStableRpcConventionsWhenDupIsOptedIn()
+    {
+        using var scope = WcfTestHelpers.UseRpcSemanticConvention(RpcSemanticConventionMode.Duplicate);
+
+        List<Activity> stoppedActivities = [];
+
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = _ => true,
+            ActivityStopped = stoppedActivities.Add,
+        };
+
+        ActivitySource.AddActivityListener(activityListener);
+
+        var tracerProvider = Sdk.CreateTracerProviderBuilder()
+            .AddWcfInstrumentation()
+            .Build();
+
+        var action = WcfTestHelpers.GetContractQualifiedMethod("Execute");
+
+        using var request = Message.CreateMessage(MessageVersion.Soap11, action);
+        request.Properties[TelemetryContextMessageProperty.Name] = new TelemetryContextMessageProperty(
+            new Dictionary<string, ActionMetadata>(StringComparer.OrdinalIgnoreCase)
+            {
+                [action] = new ActionMetadata(contractName: WcfTestHelpers.ServiceContractName, operationName: "Execute"),
+            });
+
+        var state = ClientChannelInstrumentation.BeforeSendRequest(
+            request,
+            new Uri(this.serviceBaseUri, "/Service"));
+
+        using var reply = Message.CreateMessage(MessageVersion.Soap11, action: WcfTestHelpers.GetContractQualifiedMethod("ExecuteResponse"));
+        ClientChannelInstrumentation.AfterRequestCompleted(reply, state);
+
+        tracerProvider.Shutdown();
+        tracerProvider.Dispose();
+        WcfInstrumentationActivitySource.Options = null;
+
+        var activity = Assert.Single(stoppedActivities);
+        Assert.Equal(action, activity.DisplayName);
+        Assert.Equal(WcfInstrumentationConstants.WcfSystemValue, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeRpcSystem));
+        Assert.Equal(WcfTestHelpers.ServiceContractName, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeRpcService));
+        Assert.Equal(WcfInstrumentationConstants.WcfSystemValue, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeRpcSystemName));
+        Assert.Equal(action, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeRpcMethod));
+        Assert.Equal(this.serviceBaseUri.Host, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeNetPeerName));
+        Assert.Equal(this.serviceBaseUri.Port, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeNetPeerPort));
+        Assert.Equal(this.serviceBaseUri.Host, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeServerAddress));
+        Assert.Equal(this.serviceBaseUri.Port, WcfTestHelpers.GetTagValue(activity, SemanticConventions.AttributeServerPort));
     }
 }

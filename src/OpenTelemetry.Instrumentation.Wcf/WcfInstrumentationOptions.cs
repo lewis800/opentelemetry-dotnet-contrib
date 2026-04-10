@@ -3,6 +3,8 @@
 
 using System.Diagnostics;
 using System.ServiceModel.Channels;
+using Microsoft.Extensions.Configuration;
+using static OpenTelemetry.Internal.RpcSemanticConventionHelper;
 
 namespace OpenTelemetry.Instrumentation.Wcf;
 
@@ -11,6 +13,26 @@ namespace OpenTelemetry.Instrumentation.Wcf;
 /// </summary>
 public class WcfInstrumentationOptions
 {
+    /// <summary>
+    /// Initializes a new instance of the <see cref="WcfInstrumentationOptions"/> class.
+    /// </summary>
+    public WcfInstrumentationOptions()
+        : this(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [SemanticConventionOptInKeyName] = Environment.GetEnvironmentVariable(SemanticConventionOptInKeyName),
+            })
+            .Build())
+    {
+    }
+
+    internal WcfInstrumentationOptions(IConfiguration configuration)
+    {
+        var rpcSemanticConvention = GetSemanticConventionOptIn(configuration);
+        this.EmitOldAttributes = rpcSemanticConvention.HasFlag(RpcSemanticConvention.Old);
+        this.EmitNewAttributes = rpcSemanticConvention.HasFlag(RpcSemanticConvention.New);
+    }
+
     /// <summary>
     /// Gets or sets an action to enrich an Activity.
     /// </summary>
@@ -60,4 +82,14 @@ public class WcfInstrumentationOptions
     /// />.</para>
     /// </remarks>
     public bool RecordException { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the old RPC attributes should be emitted.
+    /// </summary>
+    internal bool EmitOldAttributes { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the new RPC attributes should be emitted.
+    /// </summary>
+    internal bool EmitNewAttributes { get; set; }
 }

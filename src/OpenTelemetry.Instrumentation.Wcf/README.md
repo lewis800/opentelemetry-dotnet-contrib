@@ -239,6 +239,20 @@ on the service contracts you want to instrument:
 This instrumentation can be configured to change the default behavior by using
 `WcfInstrumentationOptions`.
 
+### RPC semantic convention opt-in
+
+This package continues to emit its existing RPC semantic conventions by default
+in the current major version.
+
+Set `OTEL_SEMCONV_STABILITY_OPT_IN` to opt into the newer RPC conventions:
+
+* `rpc`: emit only the newer RPC conventions.
+* `rpc/dup`: emit the newer RPC conventions together with the legacy-compatible
+  WCF RPC tags that can be represented on the same span.
+
+When `rpc/dup` is used, attributes whose old and new meanings share the same tag
+name (for example `rpc.method`) use the newer value.
+
 ### RecordException
 
 This instrumentation automatically sets Activity Status to Error if an unhandled

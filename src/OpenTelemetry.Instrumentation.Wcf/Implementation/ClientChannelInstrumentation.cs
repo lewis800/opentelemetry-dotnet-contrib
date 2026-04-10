@@ -6,6 +6,7 @@ using System.ServiceModel.Channels;
 using OpenTelemetry.Context.Propagation;
 using OpenTelemetry.Internal;
 using OpenTelemetry.Trace;
+using static OpenTelemetry.Internal.RpcSemanticConventionHelper;
 
 namespace OpenTelemetry.Instrumentation.Wcf.Implementation;
 
@@ -18,22 +19,41 @@ internal static class ClientChannelInstrumentation
             return new RequestTelemetryState { SuppressionScope = SuppressDownstreamInstrumentation() };
         }
 
+        var options = WcfInstrumentationActivitySource.Options!;
+        var action = string.Empty;
+        if (!string.IsNullOrEmpty(request.Headers.Action))
+        {
+            action = request.Headers.Action;
+        }
+
+        var actionMetadata = GetActionMetadata(request, action);
+        var legacyRpcMethod = WcfInstrumentationConstants.GetLegacyRpcMethod(actionMetadata, action);
+        var legacyDisplayName = string.IsNullOrEmpty(action) ? null : action;
+        var legacyRpcService = WcfInstrumentationConstants.GetLegacyRpcService(actionMetadata);
+        var (rpcMethod, rpcMethodOriginal) = WcfInstrumentationConstants.ResolveRpcMethod(actionMetadata, action);
+        var displayName = GetConventionValue(options.EmitNewAttributes, legacyDisplayName, WcfInstrumentationConstants.GetSpanName(rpcMethod));
+        var remoteAddressUri = request.Headers.To ?? remoteChannelAddress;
+
         var activity = WcfInstrumentationActivitySource.ActivitySource.StartActivity(
             WcfInstrumentationActivitySource.OutgoingRequestActivityName,
-            ActivityKind.Client);
+            ActivityKind.Client,
+            default(ActivityContext),
+            WcfInstrumentationConstants.GetRpcCreationTags(
+                options.EmitOldAttributes,
+                options.EmitNewAttributes,
+                legacyRpcMethod,
+                rpcMethod,
+                legacyRpcService,
+                remoteAddressUri,
+                (SemanticConventions.AttributeNetPeerName, SemanticConventions.AttributeNetPeerPort)));
         var suppressionScope = SuppressDownstreamInstrumentation();
 
         if (activity != null)
         {
-            var action = string.Empty;
-            if (!string.IsNullOrEmpty(request.Headers.Action))
+            if (displayName != null)
             {
-                action = request.Headers.Action;
+                activity.DisplayName = displayName;
             }
-
-            var actionMetadata = GetActionMetadata(request, action);
-            var (rpcMethod, rpcMethodOriginal) = WcfInstrumentationConstants.ResolveRpcMethod(actionMetadata, action);
-            activity.DisplayName = WcfInstrumentationConstants.GetSpanName(rpcMethod);
 
             Propagators.DefaultTextMapPropagator.Inject(
                 new PropagationContext(activity.Context, Baggage.Current),
@@ -42,23 +62,24 @@ internal static class ClientChannelInstrumentation
 
             if (activity.IsAllDataRequested)
             {
-                activity.SetTag(SemanticConventions.AttributeRpcSystemName, WcfInstrumentationConstants.WcfSystemValue);
-                activity.SetTag(SemanticConventions.AttributeRpcMethod, rpcMethod);
-                if (rpcMethodOriginal != null)
-                {
-                    activity.SetTag(SemanticConventions.AttributeRpcMethodOriginal, rpcMethodOriginal);
-                }
+                SetTag(activity, options.EmitOldAttributes, options.EmitNewAttributes, (SemanticConventions.AttributeRpcSystem, SemanticConventions.AttributeRpcSystemName), WcfInstrumentationConstants.WcfSystemValue);
+                SetTag(activity, options.EmitOldAttributes, options.EmitNewAttributes, (SemanticConventions.AttributeRpcService, null), (legacyRpcService, null));
 
-                if (WcfInstrumentationActivitySource.Options!.SetSoapMessageVersion)
+                // `rpc.method` changed meaning between the old and new RPC conventions.
+                // When both are requested, the stable value is set last and wins.
+                SetTag(activity, options.EmitOldAttributes, options.EmitNewAttributes, (SemanticConventions.AttributeRpcMethod, SemanticConventions.AttributeRpcMethod), (legacyRpcMethod, rpcMethod));
+                SetTag(activity, options.EmitOldAttributes, options.EmitNewAttributes, (null, SemanticConventions.AttributeRpcMethodOriginal), (null, rpcMethodOriginal));
+
+                if (options.SetSoapMessageVersion)
                 {
                     activity.SetTag(WcfInstrumentationConstants.AttributeSoapMessageVersion, request.Version.ToString());
                 }
 
-                var remoteAddressUri = request.Headers.To ?? remoteChannelAddress;
                 if (remoteAddressUri != null)
                 {
-                    activity.SetTag(SemanticConventions.AttributeServerAddress, remoteAddressUri.Host);
-                    activity.SetTag(SemanticConventions.AttributeServerPort, remoteAddressUri.Port);
+                    SetTag(activity, options.EmitOldAttributes, options.EmitNewAttributes, (SemanticConventions.AttributeNetPeerName, SemanticConventions.AttributeServerAddress), remoteAddressUri.Host);
+                    SetTag(activity, options.EmitOldAttributes, options.EmitNewAttributes, (SemanticConventions.AttributeNetPeerPort, SemanticConventions.AttributeServerPort), remoteAddressUri.Port);
+
                     activity.SetTag(WcfInstrumentationConstants.AttributeWcfChannelScheme, remoteAddressUri.Scheme);
                     activity.SetTag(WcfInstrumentationConstants.AttributeWcfChannelPath, remoteAddressUri.LocalPath);
                 }
@@ -70,7 +91,7 @@ internal static class ClientChannelInstrumentation
 
                 try
                 {
-                    WcfInstrumentationActivitySource.Options.Enrich?.Invoke(activity, WcfEnrichEventNames.BeforeSendRequest, request);
+                    options.Enrich?.Invoke(activity, WcfEnrichEventNames.BeforeSendRequest, request);
                 }
                 catch (Exception ex)
                 {
@@ -92,13 +113,19 @@ internal static class ClientChannelInstrumentation
         state.SuppressionScope?.Dispose();
         if (state.Activity is Activity activity)
         {
+            var options = WcfInstrumentationActivitySource.Options!;
             if (activity.IsAllDataRequested)
             {
                 if (reply == null || reply.IsFault)
                 {
                     activity.SetStatus(ActivityStatusCode.Error);
 
-                    if (WcfInstrumentationActivitySource.Options!.RecordException && exception != null)
+                    if (options.EmitNewAttributes)
+                    {
+                        activity.SetTag(SemanticConventions.AttributeErrorType, WcfInstrumentationConstants.GetErrorType(exception));
+                    }
+
+                    if (options.RecordException && exception != null)
                     {
                         activity.AddException(exception);
                     }
@@ -109,7 +136,7 @@ internal static class ClientChannelInstrumentation
                     activity.SetTag(WcfInstrumentationConstants.AttributeSoapReplyAction, reply.Headers.Action);
                     try
                     {
-                        WcfInstrumentationActivitySource.Options!.Enrich?.Invoke(activity, WcfEnrichEventNames.AfterReceiveReply, reply);
+                        options.Enrich?.Invoke(activity, WcfEnrichEventNames.AfterReceiveReply, reply);
                     }
                     catch (Exception ex)
                     {

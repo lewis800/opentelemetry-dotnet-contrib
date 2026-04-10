@@ -24,12 +24,9 @@ internal static class WcfInstrumentationActivitySource
     internal static readonly string UnassociatedExceptionActivityName = ActivitySourceName + ".Exception";
 
     private const string TelemetrySchemaUrl = "https://opentelemetry.io/schemas/1.40.0";
+    private static ActivitySource activitySource = CreateActivitySource(emitStableConventions: false);
 
-    public static ActivitySource ActivitySource { get; } = new(new ActivitySourceOptions(ActivitySourceName)
-    {
-        Version = Assembly.GetPackageVersion(),
-        TelemetrySchemaUrl = TelemetrySchemaUrl,
-    });
+    public static ActivitySource ActivitySource => activitySource;
 
     public static WcfInstrumentationOptions? Options { get; set; }
 
@@ -37,5 +34,28 @@ internal static class WcfInstrumentationActivitySource
         => TelemetryPropagationReader.Default(request, name);
 
     public static void MessageHeaderValueSetter(Message request, string name, string value)
-        => TelemetryPropagationWriter.Default(request, name, value);
+    {
+        TelemetryPropagationWriter.Default(request, name, value);
+    }
+
+    internal static void Initialize(WcfInstrumentationOptions options)
+    {
+        Options = options;
+        activitySource = CreateActivitySource(options.EmitNewAttributes);
+    }
+
+    private static ActivitySource CreateActivitySource(bool emitStableConventions)
+    {
+        var activitySourceOptions = new ActivitySourceOptions(ActivitySourceName)
+        {
+            Version = Assembly.GetPackageVersion(),
+        };
+
+        if (emitStableConventions)
+        {
+            activitySourceOptions.TelemetrySchemaUrl = TelemetrySchemaUrl;
+        }
+
+        return new ActivitySource(activitySourceOptions);
+    }
 }

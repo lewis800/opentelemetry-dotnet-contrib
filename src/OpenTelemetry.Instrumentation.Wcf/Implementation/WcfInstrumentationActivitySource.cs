@@ -6,6 +6,7 @@ using System.Reflection;
 using System.ServiceModel.Channels;
 using OpenTelemetry.Instrumentation.Wcf.Implementation;
 using OpenTelemetry.Internal;
+using OpenTelemetry.Trace;
 
 namespace OpenTelemetry.Instrumentation.Wcf;
 
@@ -22,8 +23,8 @@ internal static class WcfInstrumentationActivitySource
     internal static readonly string IncomingRequestActivityName = ActivitySourceName + ".IncomingRequest";
     internal static readonly string OutgoingRequestActivityName = ActivitySourceName + ".OutgoingRequest";
     internal static readonly string UnassociatedExceptionActivityName = ActivitySourceName + ".Exception";
+    internal static readonly Version SemanticConventionsVersion = new(1, 40, 0);
 
-    private const string TelemetrySchemaUrl = "https://opentelemetry.io/schemas/1.40.0";
     private static ActivitySource activitySource = CreateActivitySource(emitStableConventions: false);
 
     public static ActivitySource ActivitySource => activitySource;
@@ -46,16 +47,11 @@ internal static class WcfInstrumentationActivitySource
 
     private static ActivitySource CreateActivitySource(bool emitStableConventions)
     {
-        var activitySourceOptions = new ActivitySourceOptions(ActivitySourceName)
-        {
-            Version = Assembly.GetPackageVersion(),
-        };
-
         if (emitStableConventions)
         {
-            activitySourceOptions.TelemetrySchemaUrl = TelemetrySchemaUrl;
+            return ActivitySourceFactory.Create(typeof(WcfInstrumentationActivitySource), SemanticConventionsVersion);
         }
 
-        return new ActivitySource(activitySourceOptions);
+        return new ActivitySource(ActivitySourceName, Assembly.GetPackageVersion());
     }
 }
